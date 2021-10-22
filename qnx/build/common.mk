@@ -73,7 +73,7 @@ CMAKE_ARGS = -DCMAKE_TOOLCHAIN_FILE=$(PROJECT_ROOT)/qnx.nto.toolchain.cmake \
              -DWITH_EXTENDED_FILTERING=ON \
              -DWITH_DLT_QNX_SYSTEM=ON \
              -DWITH_DLT_CXX11_EXT=ON \
-             -DDLT_IPC=UNIX_SOCKET \
+             -DDLT_IPC=QNX_MESSAGE \
              -DWITH_DLT_ADAPTOR=ON \
              -DWITH_DLT_USE_IPv6=OFF \
              -DWITH_LIB_SHORT_VERSION=ON

@@ -83,6 +83,10 @@
 #   include "dlt_offline_logstorage.h"
 #   include "dlt_gateway_types.h"
 
+#   ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+#      include <sys/dispatch.h>
+#   endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
+
 #   ifdef __cplusplus
 extern "C" {
 #   endif
@@ -93,6 +97,25 @@ extern "C" {
 
 #define DLT_DAEMON_SEND_TO_ALL     -3   /**< Constant value to identify the command "send to all" */
 #define DLT_DAEMON_SEND_FORCE      -4   /**< Constant value to identify the command "send force to all" */
+
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    /** @brief Create logging resource manager.
+     *
+     * This function creates new instance of recource manager
+     * @param dpp indirection pointer to dispatch structure
+     * @param ctp indirection pointer to a dispatch context
+     * @param receiver indirection pointer to struct DltReceiver
+     * @return negative value if there was an error
+     */
+    DltReturnValue dlt_resmgr_create(dispatch_t **dpp, dispatch_context_t **ctp, DltReceiver **receiver);
+    /** @brief Destroys a channel.
+     *
+     * This function closes QNX messaging channel and frees receive structure.
+     * This is expected to be called by the connection owner: msg_thread.
+     * @param receiver pointer to struct DltReceiver
+     */
+    void dlt_resmgr_free(DltReceiver *receiver);
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
 /* UDPMulticart Default IP and Port */
 #   ifdef UDP_CONNECTION_SUPPORT

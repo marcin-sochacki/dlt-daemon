@@ -95,7 +95,7 @@ option(WITH_DLT_NETWORK_TRACE "Set to ON to enable network trace (if message que
 option(WITH_DLT_LOG_LEVEL_APP_CONFIG "Set to ON to enable default log levels based on application ids"               OFF)
 
 set(DLT_IPC "FIFO"
-    CACHE STRING "UNIX_SOCKET,FIFO")
+    CACHE STRING "UNIX_SOCKET,FIFO,QNX_MESSAGE")
 set(DLT_USER "covesa"
     CACHE STRING "Set user for process not run as root")
 set(DLT_QNX_SLOG_ADAPTER_WAIT_BUFFER_TIMEOUT_MS "100"
@@ -167,7 +167,7 @@ add_definitions(-DDLT_WRITEV_TIMEOUT_SEC=${DLT_WRITEV_TIMEOUT_SEC})
 add_definitions(-DDLT_WRITEV_TIMEOUT_USEC=${DLT_WRITEV_TIMEOUT_USEC})
 add_definitions(-DDLT_QNX_SLOG_ADAPTER_WAIT_BUFFER_TIMEOUT_MS=${DLT_QNX_SLOG_ADAPTER_WAIT_BUFFER_TIMEOUT_MS})
 
-if(NOT DLT_IPC STREQUAL "UNIX_SOCKET" AND NOT DLT_IPC STREQUAL "FIFO")
+if(NOT DLT_IPC STREQUAL "UNIX_SOCKET" AND NOT DLT_IPC STREQUAL "FIFO" AND NOT DLT_IPC STREQUAL "QNX_MESSAGE")
     message(FATAL_ERROR "${DLT_IPC} is not a valid value for DLT_IPC")
 endif()
 
@@ -209,7 +209,7 @@ if(WITH_DLT_USE_IPv6)
     add_definitions(-DDLT_USE_IPv6)
 endif()
 
-if(WITH_DLT_QNX_SYSTEM AND NOT "${CMAKE_C_COMPILER}" MATCHES "nto-qnx|qcc|ntoaarch64-gcc|ntox86_64-gcc")
+if((WITH_DLT_QNX_SYSTEM OR (DLT_IPC STREQUAL "QNX_MESSAGE")) AND NOT "${CMAKE_C_COMPILER}" MATCHES "nto-qnx|qcc|ntoaarch64-gcc|ntox86_64-gcc")
     message(FATAL_ERROR "Can only compile for QNX with a QNX compiler, but found '${CMAKE_C_COMPILER}'.")
 endif()
 

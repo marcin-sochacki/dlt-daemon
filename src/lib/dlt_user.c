@@ -111,6 +111,9 @@ static char dlt_daemon_fifo[DLT_PATH_MAX];
 static pthread_mutex_t dlt_mutex;
 static pthread_mutexattr_t dlt_mutex_attr;
 static pthread_t dlt_housekeeperthread_handle;
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+static pthread_t dlt_housekeeperthread_receive_handle;
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
 /* Sync housekeeper thread start */
 pthread_mutex_t dlt_housekeeper_running_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -272,7 +275,44 @@ static DltReturnValue dlt_socket_set_nonblock_and_linger(int sockfd)
 }
 #endif
 
-#ifdef DLT_LIB_USE_UNIX_SOCKET_IPC
+#ifdef DLT_LIB_USE_QNX_MESSAGE_IPC
+static DltReturnValue dlt_initialize_resmgr_connection(void)
+{
+    DltReturnValue rc = DLT_RETURN_OK;
+    int fd = -1;
+    name_attach_t *attach;
+
+DLT_SEM_LOCK();
+
+    fd = open("/dev/dltlog", O_RDWR);
+    if(fd < 0) {
+        if (dlt_user.connection_state != DLT_USER_RETRY_CONNECT) {
+            fprintf( stderr, "Unable to open server connection to /dev/dltlog: %s\n",
+                strerror(errno));
+            dlt_user.connection_state = DLT_USER_RETRY_CONNECT;
+        }
+    } else {
+        dlt_user.dlt_log_handle = fd;
+        dlt_user.connection_state = DLT_USER_CONNECTED;
+
+        if (dlt_receiver_init(&(dlt_user.receiver),
+                              fd,
+                              DLT_CLIENT_RECEIVE_MSG,
+                              DLT_USER_RCVBUF_MAX_SIZE) == DLT_RETURN_ERROR) {
+            dlt_user_init_state = INIT_UNITIALIZED;
+            rc = DLT_RETURN_ERROR;
+        }
+    }
+
+    if (dlt_user.receiver.attach == NULL && dlt_attach_channel(&attach) == DLT_RETURN_OK) {
+        dlt_user.receiver.attach = attach;
+    }
+
+DLT_SEM_FREE();
+    return rc;
+}
+
+#elif defined DLT_LIB_USE_UNIX_SOCKET_IPC
 static DltReturnValue dlt_initialize_socket_connection(void)
 {
     struct sockaddr_un remote;
@@ -508,7 +548,12 @@ DltReturnValue dlt_init(void)
 
 #endif
 
-#ifdef DLT_LIB_USE_UNIX_SOCKET_IPC
+#ifdef DLT_LIB_USE_QNX_MESSAGE_IPC
+    dlt_user.receiver.attach = NULL;
+    if (dlt_initialize_resmgr_connection() != DLT_RETURN_OK) {
+        return DLT_RETURN_ERROR;
+    }
+#elif defined DLT_LIB_USE_UNIX_SOCKET_IPC
 
     if (dlt_initialize_socket_connection() != DLT_RETURN_OK)
         /* We could connect to the pipe, but not to the socket, which is normally */
@@ -1043,8 +1088,10 @@ DltReturnValue dlt_free(void)
 
     if (dlt_user.dlt_log_handle != -1) {
         /* close log file/output fifo to daemon */
-#if defined DLT_LIB_USE_UNIX_SOCKET_IPC || defined DLT_LIB_USE_VSOCK_IPC
+#if defined DLT_LIB_USE_UNIX_SOCKET_IPC || defined DLT_LIB_USE_VSOCK_IPC || DLT_LIB_USE_QNX_MESSAGE_IPC
+#ifndef DLT_LIB_USE_QNX_MESSAGE_IPC
         ret = shutdown(dlt_user.dlt_log_handle, SHUT_WR);
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
         if (ret < 0) {
             dlt_vlog(LOG_WARNING, "%s: shutdown failed: %s\n", __func__, strerror(errno));
@@ -1111,6 +1158,11 @@ DltReturnValue dlt_free(void)
             dlt_vlog(LOG_WARNING, "%s: close failed: %s\n", __func__, strerror(errno));
 
         dlt_user.dlt_log_handle = -1;
+#ifdef DLT_LIB_USE_QNX_MESSAGE_IPC
+        if (dlt_user.receiver.attach) {
+            name_detach( dlt_user.receiver.attach, 0 );
+        }
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
     }
 
     /* Ignore return value */
@@ -3838,11 +3890,13 @@ void dlt_user_housekeeperthread_function(void *ptr)
     }
 
     while (in_loop) {
+#ifndef DLT_DAEMON_USE_QNX_MESSAGE_IPC
         /* Check for new messages from DLT daemon */
         if (!dlt_user.disable_injection_msg)
             if (dlt_user_log_check_user_message() < DLT_RETURN_OK)
                 /* Critical error */
                 dlt_log(LOG_CRIT, "Housekeeper thread encountered error condition\n");
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
         /* Reattach to daemon if neccesary */
         dlt_user_log_reattach_to_daemon();
@@ -3871,6 +3925,37 @@ void dlt_user_housekeeperthread_function(void *ptr)
 
     pthread_cleanup_pop(1);
 }
+
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+void dlt_user_housekeeperthread_receive_function(__attribute__((unused)) void *ptr)
+{
+    struct timespec ts;
+    bool in_loop = true;
+
+#ifdef linux
+    prctl(PR_SET_NAME, "dlt_housekeeper_receive", 0, 0, 0);
+#endif
+
+    pthread_cleanup_push(dlt_user_cleanup_handler, NULL);
+
+    while (in_loop) {
+        /* Check for new messages from DLT daemon */
+        if (!dlt_user.disable_injection_msg)
+            if (dlt_user_log_check_user_message() < DLT_RETURN_OK)
+                /* Critical error */
+                dlt_log(LOG_CRIT, "Housekeeper receive thread encountered error condition\n");
+
+        if (dlt_user.receiver.buffer == NULL) {
+            /* delay */
+            ts.tv_sec = 0;
+            ts.tv_nsec = DLT_USER_RECEIVE_NDELAY;
+            nanosleep(&ts, NULL);
+        }
+    }
+
+    pthread_cleanup_pop(1);
+}
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
 /* Private functions of user library */
 
@@ -4547,6 +4632,7 @@ DltReturnValue dlt_user_log_check_user_message(void)
     delayed_log_level_changed_callback.log_level_changed_callback = 0;
     delayed_injection_callback.data = 0;
 
+#ifndef DLT_LIB_USE_QNX_MESSAGE_IPC
 #if defined DLT_LIB_USE_UNIX_SOCKET_IPC || defined DLT_LIB_USE_VSOCK_IPC
     fd = dlt_user.dlt_log_handle;
 #else /* DLT_LIB_USE_FIFO_IPC */
@@ -4562,6 +4648,7 @@ DltReturnValue dlt_user_log_check_user_message(void)
                 dlt_user.dlt_log_handle = DLT_FD_INIT;
                 return DLT_RETURN_ERROR;
             }
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
             if (dlt_receiver_receive(receiver) <= 0)
                 /* No new message available */
@@ -4783,10 +4870,11 @@ DltReturnValue dlt_user_log_check_user_message(void)
 
             if (dlt_receiver_move_to_begin(receiver) == DLT_RETURN_ERROR)
                 return DLT_RETURN_ERROR;
+#ifndef DLT_LIB_USE_QNX_MESSAGE_IPC
         } /* while receive */
 
     } /* if */
-
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
     return DLT_RETURN_OK;
 }
 
@@ -4893,7 +4981,12 @@ void dlt_user_log_reattach_to_daemon(void)
     if (dlt_user.dlt_log_handle < 0) {
         dlt_user.dlt_log_handle = DLT_FD_INIT;
 
-#ifdef DLT_LIB_USE_UNIX_SOCKET_IPC
+#ifdef DLT_LIB_USE_QNX_MESSAGE_IPC
+        dlt_initialize_resmgr_connection();
+        if (dlt_user.connection_state != DLT_USER_CONNECTED)
+            /* return if not connected */
+            return;
+#elif DLT_LIB_USE_UNIX_SOCKET_IPC
         /* try to open connection to dlt daemon */
         dlt_initialize_socket_connection();
 
@@ -4907,7 +5000,7 @@ void dlt_user_log_reattach_to_daemon(void)
         if (dlt_user.connection_state != DLT_USER_CONNECTED)
             return;
 
-#else /* DLT_LIB_USE_FIFO_IPC */
+#elif defined DLT_LIB_USE_FIFO_IPC
         /* try to open pipe to dlt daemon */
         int fd = open(dlt_daemon_fifo, O_WRONLY | O_NONBLOCK);
 
@@ -5101,6 +5194,7 @@ int dlt_start_threads()
 void dlt_stop_threads()
 {
     int dlt_housekeeperthread_result = 0;
+    int dlt_housekeeperthread_receive_result = 0;
     int joined = 0;
 
     if (dlt_housekeeperthread_handle) {
@@ -5127,6 +5221,19 @@ void dlt_stop_threads()
 #endif
                      strerror(dlt_housekeeperthread_result));
     }
+
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    if (dlt_housekeeperthread_receive_handle) {
+        /* do not ignore return value */
+        dlt_housekeeperthread_receive_result = pthread_cancel(dlt_housekeeperthread_receive_handle);
+
+        if (dlt_housekeeperthread_receive_result != 0)
+            dlt_vlog(LOG_ERR,
+                     "ERROR %s(dlt_housekeeperthread_receive_handle): %s\n",
+                     "pthread_cancel",
+                     strerror(dlt_housekeeperthread_receive_result));
+    }
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
 #ifdef DLT_NETWORK_TRACE_ENABLE
     int dlt_segmented_nwt_result = 0;
@@ -5155,6 +5262,18 @@ void dlt_stop_threads()
 
         dlt_housekeeperthread_handle = 0; /* set to invalid */
     }
+
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    if ((dlt_housekeeperthread_receive_result == 0) && dlt_housekeeperthread_receive_handle) {
+        joined = pthread_join(dlt_housekeeperthread_receive_handle, NULL);
+
+        if (joined != 0)
+            dlt_vlog(LOG_ERR,
+                     "ERROR pthread_join(dlt_housekeeperthread_receive_handle, NULL): %s\n",
+                     strerror(joined));
+        dlt_housekeeperthread_receive_handle = 0; /* set to invalid */
+    }
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
 #ifdef DLT_NETWORK_TRACE_ENABLE
     if ((dlt_segmented_nwt_result == 0) && dlt_user.dlt_segmented_nwt_handle) {
