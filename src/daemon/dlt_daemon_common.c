@@ -91,6 +91,7 @@
 #endif
 
 #ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    int (*dlt_daemon_call_process_user_func_ptr)(DltReceiver *receiver);
     struct extattr {
         iofunc_attr_t    attr;
         DltReceiver      *receiver;
@@ -1950,7 +1951,7 @@ static int io_write(resmgr_context_t *ctp, io_write_t *msg, iofunc_ocb_t *ocb)
         }
     }
 
-    dlt_daemon_call_process_user_func(attr->receiver);
+    dlt_daemon_call_process_user_func_ptr(attr->receiver);
 
     return (_RESMGR_NPARTS (0));
 }

@@ -82,6 +82,7 @@
     #include <sys/types.h>
     #include <sys/iofunc.h>
     #include <sys/dispatch.h>
+    #include "dlt_daemon_common.h"
     static pthread_t t1;
     bool work_in_progress = true;
     struct msg_thread_arg {
@@ -1149,6 +1150,10 @@ int main(int argc, char *argv[])
     DltDaemonLocal daemon_local;
     DltDaemon daemon;
     int back = 0;
+
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    dlt_daemon_call_process_user_func_ptr = &dlt_daemon_call_process_user_func;
+#endif DLT_DAEMON_USE_QNX_MESSAGE_IPC
 
     memset(&daemon_local, 0, sizeof(DltDaemonLocal));
     memset(&daemon, 0, sizeof(DltDaemon));

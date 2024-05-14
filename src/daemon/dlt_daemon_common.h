@@ -99,6 +99,8 @@ extern "C" {
 #define DLT_DAEMON_SEND_FORCE      -4   /**< Constant value to identify the command "send force to all" */
 
 #ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    extern int (*dlt_daemon_call_process_user_func_ptr)(DltReceiver *receiver);
+
     /** @brief Create logging resource manager.
      *
      * This function creates new instance of recource manager
